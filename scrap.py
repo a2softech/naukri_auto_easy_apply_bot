@@ -8,51 +8,71 @@ import time
 import csv
 import logging
 import os
+import shutil
 
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# **Function to get Firefox binary path automatically**
+def get_firefox_binary():
+    firefox_path = shutil.which("firefox")
+    
+    if firefox_path:
+        return firefox_path
+    else:
+        # Windows ke liye default paths check karna
+        possible_paths = [
+            "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
+            "C:\\Program Files (x86)\\Mozilla Firefox\\firefox.exe"
+        ]
+        for path in possible_paths:
+            if os.path.exists(path):
+                return path
+        
+        raise Exception("Firefox binary not found! Please check your installation.")
 
-# Specify the path to GeckoDriver and Firefox binary
-FIREFOX_BINARY_PATH = "C:\\Program Files\\Mozilla Firefox\\firefox.exe"  # Change if needed
-GECKODRIVER_PATH = "./geckodriver.exe"  # Change if needed
 
-# Configure Firefox options
+# **Auto-detect Firefox binary**
+FIREFOX_BINARY_PATH = get_firefox_binary()
+GECKODRIVER_PATH = "./geckodriver.exe"  # GeckoDriver ka path
+
+# **Logging setup**
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+# **Firefox options configure karna**
 options = Options()
 options.binary_location = FIREFOX_BINARY_PATH
-options.add_argument("--headless")  # Run in headless mode
+options.add_argument("--headless")  # Headless mode me run karna
 
-# Initialize WebDriver
+# **WebDriver initialize karna**
 service = Service(GECKODRIVER_PATH)
 driver = webdriver.Firefox(service=service, options=options)
 wait = WebDriverWait(driver, 10)
 
-# User input for target URL
+# **User se input lena URL ka**
 url = input("Enter the job listing URL: ")
 if not url:
     logging.error("No URL provided. Exiting...")
     driver.quit()
     exit()
 
-# Open the URL
+# **URL open karna**
 driver.get(url)
 
-# Folder setup
+# **Folder setup**
 folder_name = "Delete_me"
 os.makedirs(folder_name, exist_ok=True)
 
-# CSV Filenames
+# **CSV Filenames**
 csv_filename = os.path.join(folder_name, "jobs.csv")
 old_data_filename = "./Already_applied_folder/already_applied.csv"
 
-# Load existing job links
+# **Pehle se existing job links load karna**
 existing_links = set()
 if os.path.exists(old_data_filename):
     with open(old_data_filename, 'r', encoding='utf-8') as f:
         reader = csv.reader(f)
         existing_links = {row[0] for row in reader}
 
-# Set page limit
+# **Scraping configuration**
 max_pages = 1
 page_count = 0
 data = []
@@ -75,7 +95,7 @@ try:
                     continue
 
                 data.append([job_link])
-                ScrapCounter = ScrapCounter + 1
+                ScrapCounter += 1
                 logging.info(f"Extracted: {ScrapCounter} {job_title}")
 
             except Exception as e:
