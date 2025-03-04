@@ -11,6 +11,11 @@ This script automates the process of applying to job listings using **Selenium**
 ✅ Uses multi-threading for efficient CSV writing.  
 ✅ Saves application history to avoid duplicate applications.  
 
+First Run py ./scrap.py
+Enter Naukri URL
+Second Run py ./apply_jobs.py
+
+
 ## Installation
 ### 1. Clone the Repository
 ```sh
