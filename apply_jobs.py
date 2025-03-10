@@ -189,7 +189,7 @@ with open(CSV_FILE, 'r', encoding='utf-8') as file:
             success_applied_queue.put(job_url)
         except TimeoutException:
             error_apply += 1
-            logging.error(f"Failed to Apply - Answer Needed: {error_apply}")
+            logging.error(f"Manually Apply Link: {error_apply}")
             failed_jobs_queue.put(job_url)
 
 # Stop threads
