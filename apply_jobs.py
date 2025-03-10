@@ -16,7 +16,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from datetime import datetime
 
-# Function to get default Firefox profile from profiles.ini
+# Function to get default Firefox profile
 def get_firefox_profile():
     profile_ini_path = os.path.expanduser("~/.mozilla/firefox/profiles.ini")  # Linux/macOS
     if os.name == "nt":  # Windows
@@ -55,9 +55,7 @@ PROFILE_PATH = get_firefox_profile()
 
 # Create folders
 current_time = datetime.now().strftime("%Y-%m-%d_%H")
-folder_name = f"Folder_{current_time}"
 already_applied_folder = "./Already_applied_folder"
-os.makedirs(folder_name, exist_ok=True)
 os.makedirs(already_applied_folder, exist_ok=True)
 
 # Logging setup
@@ -66,9 +64,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 # Constants
 DRIVER_PATH = "./geckodriver.exe"
 CSV_FILE = "./Delete_me/jobs.csv"
-COMPANY_SITES_CSV = os.path.join(folder_name, "company_sites.csv")
-FAILED_JOBS_CSV = os.path.join(folder_name, "error_failed.csv")  
-SUCCESS_APPLIED_CSV = os.path.join(folder_name, "success_applied.csv")  # ✅ New File
+COMPANY_SITES_CSV = os.path.join(already_applied_folder, "company_sites.csv")
+FAILED_JOBS_CSV = os.path.join(already_applied_folder, "do_manually_apply.csv")  
+SUCCESS_APPLIED_CSV = os.path.join(already_applied_folder, "success_applied.csv")  
 ALREADY_APPLIED_CSV = os.path.join(already_applied_folder, "already_applied.csv")
 MAX_APPLICATIONS = 500
 
@@ -92,13 +90,13 @@ wait = WebDriverWait(driver, 10)
 # Queues for async writing
 company_sites_queue = queue.Queue()
 failed_jobs_queue = queue.Queue()
-success_applied_queue = queue.Queue()  # ✅ New Queue
+success_applied_queue = queue.Queue()  
 already_applied_queue = queue.Queue()
 
 # Locks for thread safety
 company_sites_lock = threading.Lock()
 failed_jobs_lock = threading.Lock()
-success_applied_lock = threading.Lock()  # ✅ New Lock
+success_applied_lock = threading.Lock()  
 already_applied_lock = threading.Lock()
 
 # Function to write to CSV
@@ -122,57 +120,25 @@ def write_to_csv(file_path, queue, lock, headers):
 # Start background threads
 company_thread = threading.Thread(target=write_to_csv, args=(COMPANY_SITES_CSV, company_sites_queue, company_sites_lock, ["URL"]))
 failed_thread = threading.Thread(target=write_to_csv, args=(FAILED_JOBS_CSV, failed_jobs_queue, failed_jobs_lock, ["URL"]))
-success_thread = threading.Thread(target=write_to_csv, args=(SUCCESS_APPLIED_CSV, success_applied_queue, success_applied_lock, ["URL"]))  # ✅ New Thread
+success_thread = threading.Thread(target=write_to_csv, args=(SUCCESS_APPLIED_CSV, success_applied_queue, success_applied_lock, ["URL"]))  
 already_applied_thread = threading.Thread(target=write_to_csv, args=(ALREADY_APPLIED_CSV, already_applied_queue, already_applied_lock, ["URL"]))
 
 company_thread.start()
 failed_thread.start()
-success_thread.start()  # ✅ Start New Thread
+success_thread.start()  
 already_applied_thread.start()
 
 # Load already applied URLs
-def load_already_applied():
-    if not os.path.exists(ALREADY_APPLIED_CSV):
+def load_urls_from_csv(file_path):
+    if not os.path.exists(file_path):
         return set()
-    with open(ALREADY_APPLIED_CSV, 'r', encoding='utf-8') as file:
+    with open(file_path, 'r', encoding='utf-8') as file:
         reader = csv.reader(file)
         next(reader, None)  # Skip header
         return {row[0] for row in reader}
 
-already_applied_urls = load_already_applied()
-
-# Helper functions
-def check_already_applied():
-    try:
-        return driver.find_elements(By.ID, "already-applied")
-    except Exception as e:
-        logging.error(f"Error checking already applied: {e}")
-        return []
-
-def handle_alerts():
-    try:
-        return driver.find_elements(By.XPATH, "//*[contains(@class, 'styles_alert-message-text__')]")
-    except Exception as e:
-        logging.error(f"Error handling alerts: {e}")
-        return []
-
-def apply_to_job():
-    try:
-        apply_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[text()='Apply']")))
-        apply_button.click()
-
-        success_message = wait.until(
-            EC.presence_of_element_located((By.XPATH, "//span[contains(@class, 'apply-message') and contains(text(), 'successfully applied')]"))
-        )
-        return True
-    except TimeoutException:
-        return False
-    except NoSuchElementException:
-        logging.error("Element not found.")
-        return False
-    except Exception as e:
-        logging.error(f"Error applying to job: {e}")
-        return False
+already_applied_urls = load_urls_from_csv(ALREADY_APPLIED_CSV)
+company_sites_urls = load_urls_from_csv(COMPANY_SITES_CSV)  # ✅ Load company sites
 
 # Read CSV file
 with open(CSV_FILE, 'r', encoding='utf-8') as file:
@@ -180,38 +146,50 @@ with open(CSV_FILE, 'r', encoding='utf-8') as file:
     for job in job_links:
         job_url = job[0]
 
-        if job_url in already_applied_urls:
+        # ✅ Check if already applied or exists in company_sites.csv
+        if job_url in already_applied_urls or job_url in company_sites_urls:
             skip_job_applied += 1
-            logging.info(f"Skipping already applied job: {skip_job_applied}")
+            logging.info(f"Skipping job (Already Applied/Company Site Exists): {skip_job_applied}")
             continue
 
         driver.get(job_url)
         time.sleep(3)
 
-        if check_already_applied():
-            already_applied += 1
-            logging.info(f"Already Applied Count: {already_applied}")
-            already_applied_queue.put(job_url)
-            already_applied_urls.add(job_url)
-            continue
+        # ✅ Check if already applied
+        try:
+            already_applied_element = driver.find_element(By.ID, "already-applied")
+            if already_applied_element:
+                already_applied += 1
+                logging.info(f"Already Applied Count: {already_applied}")
+                already_applied_queue.put(job_url)
+                already_applied_urls.add(job_url)
+                continue
+        except NoSuchElementException:
+            pass
 
-        if handle_alerts():
-            continue
-
+        # ✅ Check if it is a company site
         company_site_buttons = driver.find_elements(By.ID, "company-site-button")
         if company_site_buttons:
             company_sites_count += 1
-            logging.info(f"Company Site Found: {company_sites_count}")
+            logging.info(f"Company Site Found (Skipping): {company_sites_count}")
             company_sites_queue.put(job_url)
+            company_sites_urls.add(job_url)  # ✅ Add to company_sites.csv
             continue
 
-        if success_apply < MAX_APPLICATIONS and apply_to_job():
+        # ✅ Try applying
+        try:
+            apply_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[text()='Apply']")))
+            apply_button.click()
+
+            success_message = wait.until(
+                EC.presence_of_element_located((By.XPATH, "//span[contains(text(), 'successfully applied')]"))
+            )
             success_apply += 1
             logging.info(f"Successfully Applied: {success_apply}")
-            success_applied_queue.put(job_url)  # ✅ Store success jobs
-        else:
+            success_applied_queue.put(job_url)
+        except TimeoutException:
             error_apply += 1
-            logging.error(f"Failed to Apply - Answer Need: {error_apply}")
+            logging.error(f"Failed to Apply - Answer Needed: {error_apply}")
             failed_jobs_queue.put(job_url)
 
 # Stop threads
