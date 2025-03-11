@@ -73,7 +73,7 @@ if os.path.exists(old_data_filename):
         existing_links = {row[0] for row in reader}
 
 # **Scraping configuration**
-max_pages = 1
+max_pages = 25
 page_count = 0
 data = []
 ScrapCounter = 0
