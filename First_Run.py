@@ -18,7 +18,6 @@ def get_firefox_binary():
     if firefox_path:
         return firefox_path
     else:
-        # Windows ke liye default paths check karna
         possible_paths = [
             "C:\\Program Files\\Mozilla Firefox\\firefox.exe",
             "C:\\Program Files (x86)\\Mozilla Firefox\\firefox.exe"
@@ -63,43 +62,80 @@ os.makedirs(folder_name, exist_ok=True)
 
 # **CSV Filenames**
 csv_filename = os.path.join(folder_name, "jobs.csv")
+filter_csv_filename = os.path.join(folder_name, "jobs_filter.csv")
 old_data_filename = "./Already_applied_folder/already_applied.csv"
 
 # **Pehle se existing job links load karna**
 existing_links = set()
+
+# already_applied.csv load
 if os.path.exists(old_data_filename):
     with open(old_data_filename, 'r', encoding='utf-8') as f:
         reader = csv.reader(f)
-        existing_links = {row[0] for row in reader}
+        for row in reader:
+            if row:
+                existing_links.add(row[0])
+
+# jobs.csv load
+if os.path.exists(csv_filename):
+    with open(csv_filename, 'r', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if row:
+                existing_links.add(row[0])
 
 # **Scraping configuration**
-max_pages = 25
+max_pages = 50
 page_count = 0
 data = []
+filter_data = []
 ScrapCounter = 0
+TotalSkipped = 0
 
 try:
     while True:
         wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, "srp-jobtuple-wrapper")))
         job_elements = driver.find_elements(By.CSS_SELECTOR, "div.srp-jobtuple-wrapper a.title")
 
+        page_skip_count = 0  # NEW: per-page skip counter
+
         for job_element in job_elements:
             try:
                 job_link = job_element.get_attribute("href")
                 job_title = job_element.text
 
-                company = job_element.find_element(By.XPATH, "./ancestor::div[contains(@class, 'srp-jobtuple-wrapper')]//a[contains(@class, 'comp-name')]").text or "Not Available"
-                location = job_element.find_element(By.XPATH, "./ancestor::div[contains(@class, 'srp-jobtuple-wrapper')]//span[contains(@class, 'locWdth')]").text or "Not Available"
+                wrapper = job_element.find_element(By.XPATH, "./ancestor::div[contains(@class, 'srp-jobtuple-wrapper')]")
+                company = wrapper.find_element(By.XPATH, ".//a[contains(@class, 'comp-name')]").text or "Not Available"
+                location = wrapper.find_element(By.XPATH, ".//span[contains(@class, 'locWdth')]").text or "Not Available"
+                
+                # NEW: Experience Required extract karna
+                try:
+                    experience = wrapper.find_element(By.XPATH, ".//span[contains(@class, 'expwdth')]").text
+                except:
+                    experience = "Not Available"
 
                 if job_link in existing_links:
+                    logging.warning(f"⚠️ Skipped (already exists): {job_link}")
+                    page_skip_count += 1
+                    TotalSkipped += 1
                     continue
 
+                # Old jobs.csv ke liye
                 data.append([job_link])
+
+                # jobs_filter.csv ke liye
+                filter_data.append([company, experience, location, job_link])
+
                 ScrapCounter += 1
                 logging.info(f"Extracted: {ScrapCounter} {job_title}")
 
             except Exception as e:
                 logging.error(f"Error extracting job data: {e}")
+
+        # ✅ Agar ek page me 20 ya usse zyada skip hue to max_pages +1
+        if page_skip_count >= 20:
+            max_pages += 1
+            logging.info(f"🔄 Page {page_count+1}: {page_skip_count} skips found, increasing max_pages → {max_pages}")
 
         page_count += 1
         if page_count >= max_pages:
@@ -121,7 +157,28 @@ try:
 
 finally:
     driver.quit()
-    with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
-        csv_writer = csv.writer(csvfile)
-        csv_writer.writerows(data)
-    logging.info(f"✅ CSV file '{csv_filename}' updated successfully!")
+
+    # === jobs.csv append mode ===
+    if data:
+        with open(csv_filename, 'a', newline='', encoding='utf-8') as csvfile:
+            csv_writer = csv.writer(csvfile)
+            csv_writer.writerows(data)
+        logging.info(f"✅ {len(data)} new records added in jobs.csv")
+    else:
+        logging.info("ℹ️ No new records for jobs.csv")
+
+    # === jobs_filter.csv append mode ===
+    if filter_data:
+        file_exists = os.path.exists(filter_csv_filename)
+        with open(filter_csv_filename, 'a', newline='', encoding='utf-8') as filterfile:
+            csv_writer = csv.writer(filterfile)
+            # Agar file pehle nahi hai tabhi header likhe
+            if not file_exists:
+                csv_writer.writerow(["Company Name", "Experience Required", "Location", "Link"])
+            csv_writer.writerows(filter_data)
+        logging.info(f"✅ {len(filter_data)} new records added in jobs_filter.csv")
+    else:
+        logging.info("ℹ️ No new records for jobs_filter.csv")
+
+    # === Final Summary ===
+    logging.info(f"📊 Summary → Extracted: {ScrapCounter}, Skipped: {TotalSkipped}, Added: {len(data)}")
