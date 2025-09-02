@@ -181,8 +181,11 @@ with open(CSV_FILE, 'r', encoding='utf-8') as file:
             apply_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[text()='Apply']")))
             apply_button.click()
 
-            success_message = wait.until(
-                EC.presence_of_element_located((By.XPATH, "//span[contains(text(), 'successfully applied')]"))
+            wait.until(
+                EC.any_of(
+                    EC.presence_of_element_located((By.CLASS_NAME, "applied-job-content")),
+                    EC.presence_of_element_located((By.CLASS_NAME, "apply-message"))
+                    )
             )
             success_apply += 1
             logging.info(f"Successfully Applied: {success_apply}")
