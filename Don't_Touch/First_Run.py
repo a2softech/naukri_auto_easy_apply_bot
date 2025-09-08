@@ -14,7 +14,6 @@ import shutil
 # **Function to get Firefox binary path automatically**
 def get_firefox_binary():
     firefox_path = shutil.which("firefox")
-    
     if firefox_path:
         return firefox_path
     else:
@@ -25,13 +24,12 @@ def get_firefox_binary():
         for path in possible_paths:
             if os.path.exists(path):
                 return path
-        
         raise Exception("Firefox binary not found! Please check your installation.")
 
 
 # **Auto-detect Firefox binary**
 FIREFOX_BINARY_PATH = get_firefox_binary()
-GECKODRIVER_PATH = "./geckodriver.exe"  # GeckoDriver ka path
+GECKODRIVER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "geckodriver.exe")
 
 # **Logging setup**
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -48,6 +46,7 @@ wait = WebDriverWait(driver, 10)
 
 # **User se input lena URL ka**
 url = input("Enter the job listing URL: ")
+no_of_jobs_want_to_scrap = int(input("Enter no of jobs you want to scrap: "))
 if not url:
     logging.error("No URL provided. Exiting...")
     driver.quit()
@@ -64,6 +63,7 @@ os.makedirs(folder_name, exist_ok=True)
 csv_filename = os.path.join(folder_name, "jobs.csv")
 filter_csv_filename = os.path.join(folder_name, "jobs_filter.csv")
 old_data_filename = "./Already_applied_folder/already_applied.csv"
+skip_jobs_filename = os.path.join(folder_name, "./Already_applied_folder/skip_jobs.csv")
 
 # **Pehle se existing job links load karna**
 existing_links = set()
@@ -84,20 +84,47 @@ if os.path.exists(csv_filename):
             if row:
                 existing_links.add(row[0])
 
+# skip_jobs.csv load (column index 3 → 4th column)
+if os.path.exists(skip_jobs_filename):
+    with open(skip_jobs_filename, 'r', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        for row in reader:
+            if len(row) >= 4:
+                existing_links.add(row[3])
+
 # **Scraping configuration**
-max_pages = 50
+max_pages = (no_of_jobs_want_to_scrap) // 20
 page_count = 0
 data = []
 filter_data = []
 ScrapCounter = 0
 TotalSkipped = 0
 
+
+def safe_save():
+    """Har step par data save karne ka helper function"""
+    if data:
+        with open(csv_filename, 'a', newline='', encoding='utf-8') as csvfile:
+            csv_writer = csv.writer(csvfile)
+            csv_writer.writerows(data)
+        data.clear()  # clear after saving
+
+    if filter_data:
+        file_exists = os.path.exists(filter_csv_filename)
+        with open(filter_csv_filename, 'a', newline='', encoding='utf-8') as filterfile:
+            csv_writer = csv.writer(filterfile)
+            if not file_exists:
+                csv_writer.writerow(["Company Name", "Experience Required", "Location", "Link"])
+            csv_writer.writerows(filter_data)
+        filter_data.clear()
+
+
 try:
     while True:
         wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, "srp-jobtuple-wrapper")))
         job_elements = driver.find_elements(By.CSS_SELECTOR, "div.srp-jobtuple-wrapper a.title")
 
-        page_skip_count = 0  # NEW: per-page skip counter
+        page_skip_count = 0
 
         for job_element in job_elements:
             try:
@@ -108,17 +135,20 @@ try:
                 company = wrapper.find_element(By.XPATH, ".//a[contains(@class, 'comp-name')]").text or "Not Available"
                 location = wrapper.find_element(By.XPATH, ".//span[contains(@class, 'locWdth')]").text or "Not Available"
                 
-                # NEW: Experience Required extract karna
                 try:
                     experience = wrapper.find_element(By.XPATH, ".//span[contains(@class, 'expwdth')]").text
                 except:
                     experience = "Not Available"
 
+                # Skip condition
                 if job_link in existing_links:
-                    logging.warning(f"⚠️ Skipped (already exists): {job_link}")
+                    logging.warning(f"⚠️ Skipped: {job_link}")
                     page_skip_count += 1
                     TotalSkipped += 1
                     continue
+
+                # Add to set so duplicate na aaye
+                existing_links.add(job_link)
 
                 # Old jobs.csv ke liye
                 data.append([job_link])
@@ -129,10 +159,12 @@ try:
                 ScrapCounter += 1
                 logging.info(f"Extracted: {ScrapCounter} {job_title}")
 
+                # Har scrape ke baad save (crash safety)
+                safe_save()
+
             except Exception as e:
                 logging.error(f"Error extracting job data: {e}")
 
-        # ✅ Agar ek page me 20 ya usse zyada skip hue to max_pages +1
         if page_skip_count >= 20:
             max_pages += 1
             logging.info(f"🔄 Page {page_count+1}: {page_skip_count} skips found, increasing max_pages → {max_pages}")
@@ -157,28 +189,6 @@ try:
 
 finally:
     driver.quit()
+    safe_save()  # last save
 
-    # === jobs.csv append mode ===
-    if data:
-        with open(csv_filename, 'a', newline='', encoding='utf-8') as csvfile:
-            csv_writer = csv.writer(csvfile)
-            csv_writer.writerows(data)
-        logging.info(f"✅ {len(data)} new records added in jobs.csv")
-    else:
-        logging.info("ℹ️ No new records for jobs.csv")
-
-    # === jobs_filter.csv append mode ===
-    if filter_data:
-        file_exists = os.path.exists(filter_csv_filename)
-        with open(filter_csv_filename, 'a', newline='', encoding='utf-8') as filterfile:
-            csv_writer = csv.writer(filterfile)
-            # Agar file pehle nahi hai tabhi header likhe
-            if not file_exists:
-                csv_writer.writerow(["Company Name", "Experience Required", "Location", "Link"])
-            csv_writer.writerows(filter_data)
-        logging.info(f"✅ {len(filter_data)} new records added in jobs_filter.csv")
-    else:
-        logging.info("ℹ️ No new records for jobs_filter.csv")
-
-    # === Final Summary ===
-    logging.info(f"📊 Summary → Extracted: {ScrapCounter}, Skipped: {TotalSkipped}, Added: {len(data)}")
+    logging.info(f"📊 Summary → Extracted: {ScrapCounter}, Skipped: {TotalSkipped}")

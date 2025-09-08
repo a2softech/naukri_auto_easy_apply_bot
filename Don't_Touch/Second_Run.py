@@ -62,12 +62,13 @@ os.makedirs(already_applied_folder, exist_ok=True)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Constants
-DRIVER_PATH = "./geckodriver.exe"
+DRIVER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "geckodriver.exe")
 CSV_FILE = "./Delete_me/jobs.csv"
 COMPANY_SITES_CSV = os.path.join(already_applied_folder, "company_sites.csv")
 FAILED_JOBS_CSV = os.path.join(already_applied_folder, "do_manually_apply.csv")  
 SUCCESS_APPLIED_CSV = os.path.join(already_applied_folder, "success_applied.csv")  
 ALREADY_APPLIED_CSV = os.path.join(already_applied_folder, "already_applied.csv")
+EXPIRED_JOBS_CSV = os.path.join(already_applied_folder, "expired_jobs.csv")
 MAX_APPLICATIONS = 500
 
 # Initialize counters
@@ -75,7 +76,12 @@ success_apply = 0
 error_apply = 0
 already_applied = 0
 company_sites_count = 0
-skip_job_applied = 0
+expired_jobs_count = 0
+skip_job_applied_already = 0
+skip_job_applied_company = 0
+skip_job_expired = 0
+skip_job_manual = 0
+line_no = 0
 
 # Initialize WebDriver
 service = Service(DRIVER_PATH)
@@ -92,12 +98,14 @@ company_sites_queue = queue.Queue()
 failed_jobs_queue = queue.Queue()
 success_applied_queue = queue.Queue()  
 already_applied_queue = queue.Queue()
+expired_jobs_queue = queue.Queue()
 
 # Locks for thread safety
 company_sites_lock = threading.Lock()
 failed_jobs_lock = threading.Lock()
 success_applied_lock = threading.Lock()  
 already_applied_lock = threading.Lock()
+expired_jobs_lock = threading.Lock()
 
 # Function to write to CSV
 def write_to_csv(file_path, queue, lock, headers):
@@ -122,11 +130,13 @@ company_thread = threading.Thread(target=write_to_csv, args=(COMPANY_SITES_CSV, 
 failed_thread = threading.Thread(target=write_to_csv, args=(FAILED_JOBS_CSV, failed_jobs_queue, failed_jobs_lock, ["URL"]))
 success_thread = threading.Thread(target=write_to_csv, args=(SUCCESS_APPLIED_CSV, success_applied_queue, success_applied_lock, ["URL"]))  
 already_applied_thread = threading.Thread(target=write_to_csv, args=(ALREADY_APPLIED_CSV, already_applied_queue, already_applied_lock, ["URL"]))
+expired_jobs_thread = threading.Thread(target=write_to_csv, args=(EXPIRED_JOBS_CSV, expired_jobs_queue, expired_jobs_lock, ["URL"]))
 
 company_thread.start()
 failed_thread.start()
 success_thread.start()  
 already_applied_thread.start()
+expired_jobs_thread.start()
 
 # Load already applied URLs
 def load_urls_from_csv(file_path):
@@ -138,7 +148,8 @@ def load_urls_from_csv(file_path):
         return {row[0] for row in reader}
 
 already_applied_urls = load_urls_from_csv(ALREADY_APPLIED_CSV)
-company_sites_urls = load_urls_from_csv(COMPANY_SITES_CSV)  # ✅ Load company sites
+company_sites_urls = load_urls_from_csv(COMPANY_SITES_CSV)
+expired_jobs_urls = load_urls_from_csv(EXPIRED_JOBS_CSV)
 
 # Read CSV file
 with open(CSV_FILE, 'r', encoding='utf-8') as file:
@@ -146,21 +157,51 @@ with open(CSV_FILE, 'r', encoding='utf-8') as file:
     for job in job_links:
         job_url = job[0]
 
-        # ✅ Check if already applied or exists in company_sites.csv
-        if job_url in already_applied_urls or job_url in company_sites_urls:
-            skip_job_applied += 1
-            logging.info(f"Skipping job (Already Applied/Company Site Exists): {skip_job_applied}")
+        # ✅ Skip already applied / company site / expired
+        if job_url in already_applied_urls:
+            skip_job_applied_already += 1
+            line_no = line_no + 1
+            logging.info(f"{line_no} Skipping job (Already Applied): {skip_job_applied_already}")
+            continue
+        if job_url in company_sites_urls:
+            skip_job_applied_company += 1
+            line_no = line_no + 1
+            logging.info(f"{line_no} Skipping job (Company Site Exists): {skip_job_applied_company}")
+            continue
+        if job_url in expired_jobs_urls:
+            skip_job_expired += 1
+            line_no = line_no + 1
+            logging.info(f"{line_no} Skipping job (Expired Already): {skip_job_expired}")
+            continue
+        if job_url in expired_jobs_urls:
+            skip_job_manual += 1
+            line_no = line_no + 1
+            logging.info(f"{line_no} Skipping job (Manually): {skip_job_expired}")
             continue
 
         driver.get(job_url)
         time.sleep(3)
 
+        # ✅ Check if job is expired
+        try:
+            expired_element = driver.find_element(By.CLASS_NAME, "styles_alert-message-text__QwDRi")
+            if expired_element and "expired" in expired_element.text.lower():
+                expired_jobs_count += 1
+                line_no = line_no + 1
+                logging.info(f"{line_no} Job Expired (Skipping): {expired_jobs_count}")
+                expired_jobs_queue.put(job_url)
+                expired_jobs_urls.add(job_url)
+                continue
+        except NoSuchElementException:
+            pass
+
         # ✅ Check if already applied
         try:
             already_applied_element = driver.find_element(By.ID, "already-applied")
             if already_applied_element:
+                line_no = line_no + 1
                 already_applied += 1
-                logging.info(f"Already Applied Count: {already_applied}")
+                logging.info(f"{line_no} Already Applied Count: {already_applied}")
                 already_applied_queue.put(job_url)
                 already_applied_urls.add(job_url)
                 continue
@@ -171,9 +212,11 @@ with open(CSV_FILE, 'r', encoding='utf-8') as file:
         company_site_buttons = driver.find_elements(By.ID, "company-site-button")
         if company_site_buttons:
             company_sites_count += 1
-            logging.info(f"Company Site Found (Skipping): {company_sites_count}")
+            line_no = line_no + 1
+
+            logging.info(f"{line_no} Company Site Found (Skipping): {company_sites_count}")
             company_sites_queue.put(job_url)
-            company_sites_urls.add(job_url)  # ✅ Add to company_sites.csv
+            company_sites_urls.add(job_url)
             continue
 
         # ✅ Try applying
@@ -188,11 +231,15 @@ with open(CSV_FILE, 'r', encoding='utf-8') as file:
                     )
             )
             success_apply += 1
-            logging.info(f"Successfully Applied: {success_apply}")
+            line_no = line_no + 1
+
+            logging.info(f"{line_no} Successfully Applied: {success_apply}")
             success_applied_queue.put(job_url)
         except TimeoutException:
             error_apply += 1
-            logging.error(f"Manually Apply Link: {error_apply}")
+            line_no = line_no + 1
+
+            logging.error(f"{line_no} Manually Apply Link: {error_apply}")
             failed_jobs_queue.put(job_url)
 
 # Stop threads
@@ -200,10 +247,12 @@ company_sites_queue.put(None)
 failed_jobs_queue.put(None)
 success_applied_queue.put(None)
 already_applied_queue.put(None)
+expired_jobs_queue.put(None)
 
 company_thread.join()
 failed_thread.join()
 success_thread.join()
 already_applied_thread.join()
+expired_jobs_thread.join()
 
 driver.quit()

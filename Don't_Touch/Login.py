@@ -8,6 +8,15 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+# Path of cred.txt (one level up from Don't_Touch)
+CRED_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "../cred.txt")
+
+# --- Read credentials ---
+with open(CRED_FILE, "r", encoding="utf-8") as f:
+    lines = f.read().splitlines()
+    EMAIL = lines[0].strip()
+    PASSWORD = lines[1].strip()
+
 # Function to get default Firefox profile
 def get_firefox_profile():
     profile_ini_path = os.path.expanduser("~/.mozilla/firefox/profiles.ini")  # Linux/macOS
@@ -46,8 +55,8 @@ FIREFOX_BINARY = get_firefox_binary()
 PROFILE_PATH = get_firefox_profile()
 
 # Constants
-DRIVER_PATH = "./geckodriver.exe"
-NAUKRI_URL = "https://www.naukri.com/mnjuser/homepage"
+DRIVER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "geckodriver.exe")
+NAUKRI_URL = "https://www.naukri.com/nlogin/login"
 
 # Initialize WebDriver
 service = Service(DRIVER_PATH)
@@ -60,21 +69,27 @@ driver = webdriver.Firefox(service=service, options=options)
 wait = WebDriverWait(driver, 10)
 
 try:
-    # Open Naukri homepage
+    # Open Naukri Login Page
     driver.get(NAUKRI_URL)
-    
-    # Click on Profile Dropdown
-    profile_button = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "div.nI-gNb-drawer__icon")))
-    profile_button.click()
 
-    # Click Logout Button
-    logout_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//a[contains(text(),'Logout')]")))
-    logout_button.click()
+    # Enter Email/Mobile
+    email_input = wait.until(EC.presence_of_element_located((By.ID, "usernameField")))
+    email_input.send_keys(EMAIL)
 
-    print("Successfully logged out from Naukri.com")
+    # Enter Password
+    password_input = wait.until(EC.presence_of_element_located((By.ID, "passwordField")))
+    password_input.send_keys(PASSWORD)
+
+    # Click Login Button
+    login_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(text(),'Login')]")))
+    login_button.click()
+
+    # Wait for Profile Icon to verify successful login
+    wait.until(EC.presence_of_element_located((By.CLASS_NAME, "nI-gNb-drawer__icon")))
+    print("✅ Successfully Logged in to Naukri.com")
 
 except Exception as e:
-    print(f"Error: {e}")
+    print(f"❌ Login failed: {e}")
 
 finally:
     driver.quit()
