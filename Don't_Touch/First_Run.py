@@ -1,14 +1,14 @@
+import os
+import csv
+import time
+import shutil
+import logging
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-import time
-import csv
-import logging
-import os
-import shutil
 
 
 # **Function to get Firefox binary path automatically**
@@ -46,7 +46,7 @@ wait = WebDriverWait(driver, 10)
 
 # **User se input lena URL ka**
 url = input("Enter the job listing URL: ")
-no_of_jobs_want_to_scrap = int(input("Enter no of jobs you want to scrap: "))
+no_of_jobs_want_to_scrap = (int(input("Enter no of jobs you want to scrap: "))//20)
 if not url:
     logging.error("No URL provided. Exiting...")
     driver.quit()
@@ -62,52 +62,60 @@ os.makedirs(folder_name, exist_ok=True)
 # **CSV Filenames**
 csv_filename = os.path.join(folder_name, "jobs.csv")
 filter_csv_filename = os.path.join(folder_name, "jobs_filter.csv")
-old_data_filename = "./Already_applied_folder/already_applied.csv"
-skip_jobs_filename = os.path.join(folder_name, "./Already_applied_folder/skip_jobs.csv")
+
+# === Files jaha se skip check karna hai ===
+skip_files = {
+    "already_applied.csv": "./Already_applied_folder/already_applied.csv",
+    "skip_jobs.csv (4th col)": "./Already_applied_folder/skip_jobs.csv",
+    "company_sites.csv": "./Already_applied_folder/company_sites.csv",
+    "do_manually_apply.csv": "./Already_applied_folder/do_manually_apply.csv",
+    "expired_jobs.csv": "./Already_applied_folder/expired_jobs.csv",
+    "success_applied.csv": "./Already_applied_folder/success_applied.csv",
+    "jobs.csv": csv_filename  # apna hi jobs.csv
+}
 
 # **Pehle se existing job links load karna**
 existing_links = set()
+skip_source_map = {}  # {link: "source"} to track reason
 
-# already_applied.csv load
-if os.path.exists(old_data_filename):
-    with open(old_data_filename, 'r', encoding='utf-8') as f:
-        reader = csv.reader(f)
-        for row in reader:
-            if row:
-                existing_links.add(row[0])
+def load_links_from_file(file_path, source_name, column_index=0):
+    """Generic function to load links from a csv file"""
+    if os.path.exists(file_path):
+        with open(file_path, 'r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if len(row) > column_index:
+                    link = row[column_index].strip()
+                    if link:
+                        existing_links.add(link)
+                        skip_source_map[link] = source_name
 
-# jobs.csv load
-if os.path.exists(csv_filename):
-    with open(csv_filename, 'r', encoding='utf-8') as f:
-        reader = csv.reader(f)
-        for row in reader:
-            if row:
-                existing_links.add(row[0])
-
-# skip_jobs.csv load (column index 3 → 4th column)
-if os.path.exists(skip_jobs_filename):
-    with open(skip_jobs_filename, 'r', encoding='utf-8') as f:
-        reader = csv.reader(f)
-        for row in reader:
-            if len(row) >= 4:
-                existing_links.add(row[3])
+# Load from all skip files
+for source, path in skip_files.items():
+    if "skip_jobs.csv" in source:  
+        # 4th column wali file
+        load_links_from_file(path, source, column_index=3)
+    else:
+        load_links_from_file(path, source, column_index=0)
 
 # **Scraping configuration**
-max_pages = (no_of_jobs_want_to_scrap) // 20
+max_pages = ((no_of_jobs_want_to_scrap))
 page_count = 0
-data = []
-filter_data = []
+data, filter_data = [], []
 ScrapCounter = 0
 TotalSkipped = 0
 
+# Counters
+skip_counts = {src: 0 for src in skip_files.keys()}
+
 
 def safe_save():
-    """Har step par data save karne ka helper function"""
+    """Crash safety ke liye har step par data save"""
     if data:
         with open(csv_filename, 'a', newline='', encoding='utf-8') as csvfile:
             csv_writer = csv.writer(csvfile)
             csv_writer.writerows(data)
-        data.clear()  # clear after saving
+        data.clear()
 
     if filter_data:
         file_exists = os.path.exists(filter_csv_filename)
@@ -134,17 +142,19 @@ try:
                 wrapper = job_element.find_element(By.XPATH, "./ancestor::div[contains(@class, 'srp-jobtuple-wrapper')]")
                 company = wrapper.find_element(By.XPATH, ".//a[contains(@class, 'comp-name')]").text or "Not Available"
                 location = wrapper.find_element(By.XPATH, ".//span[contains(@class, 'locWdth')]").text or "Not Available"
-                
+
                 try:
                     experience = wrapper.find_element(By.XPATH, ".//span[contains(@class, 'expwdth')]").text
                 except:
                     experience = "Not Available"
 
-                # Skip condition
+                # Skip condition with reason
                 if job_link in existing_links:
-                    logging.warning(f"⚠️ Skipped: {job_link}")
-                    page_skip_count += 1
+                    reason = skip_source_map.get(job_link, "Unknown Source")
+                    skip_counts[reason] = skip_counts.get(reason, 0) + 1
                     TotalSkipped += 1
+                    page_skip_count += 1
+                    logging.warning(f"⚠️ Skipped ({skip_counts[reason]} from {reason}): {job_link}")
                     continue
 
                 # Add to set so duplicate na aaye
@@ -159,7 +169,6 @@ try:
                 ScrapCounter += 1
                 logging.info(f"Extracted: {ScrapCounter} {job_title}")
 
-                # Har scrape ke baad save (crash safety)
                 safe_save()
 
             except Exception as e:
@@ -189,6 +198,11 @@ try:
 
 finally:
     driver.quit()
-    safe_save()  # last save
+    safe_save()
 
-    logging.info(f"📊 Summary → Extracted: {ScrapCounter}, Skipped: {TotalSkipped}")
+    # Final Summary
+    logging.info("📊 Summary →")
+    logging.info(f"Extracted: {ScrapCounter}")
+    logging.info(f"Total Skipped: {TotalSkipped}")
+    for source, count in skip_counts.items():
+        logging.info(f"  {source}: {count}")
