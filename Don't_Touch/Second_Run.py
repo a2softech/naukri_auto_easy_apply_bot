@@ -188,7 +188,7 @@ with open(CSV_FILE, 'r', encoding='utf-8') as file:
             if expired_element and "expired" in expired_element.text.lower():
                 expired_jobs_count += 1
                 line_no += 1
-                logging.info(f"{line_no} Job Expired (Skipping)")
+                logging.info(f"{line_no} Job Expired (Skipping) ({expired_jobs_count})")
                 expired_jobs_queue.put(job_url)
                 expired_jobs_urls.add(job_url)
                 continue
@@ -200,7 +200,7 @@ with open(CSV_FILE, 'r', encoding='utf-8') as file:
             if already_applied_element:
                 line_no += 1
                 already_applied += 1
-                logging.info(f"{line_no} Already Applied Count: {already_applied}")
+                logging.info(f"{line_no} Already Applied Count: ({already_applied})")
                 already_applied_queue.put(job_url)
                 already_applied_urls.add(job_url)
                 continue
@@ -211,7 +211,7 @@ with open(CSV_FILE, 'r', encoding='utf-8') as file:
         if company_site_buttons:
             company_sites_count += 1
             line_no += 1
-            logging.info(f"{line_no} Company Site Found (Skipping)")
+            logging.info(f"{line_no} Company Site Found (Skipping) ({company_sites_count})")
             company_sites_queue.put(job_url)
             company_sites_urls.add(job_url)
             continue
@@ -228,12 +228,12 @@ with open(CSV_FILE, 'r', encoding='utf-8') as file:
             )
             success_apply += 1
             line_no += 1
-            logging.info(f"{line_no} Successfully Applied")
+            logging.info(f"{line_no} Successfully Applied ({success_apply})")
             success_applied_queue.put(job_url)
         except TimeoutException:
             error_apply += 1
             line_no += 1
-            logging.error(f"{line_no} Manually Apply Link")
+            logging.error(f"{line_no} Manually Apply Link ({error_apply})")
             failed_jobs_queue.put(job_url)
             manual_jobs_urls.add(job_url)
 
