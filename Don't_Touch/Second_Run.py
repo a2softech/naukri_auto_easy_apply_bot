@@ -17,7 +17,7 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException
 from datetime import datetime
 
 # ===============================
-# 🔹  FIREFOX SETUP FUNCTIONS
+# 🔹 FIREFOX SETUP FUNCTIONS
 # ===============================
 
 def get_firefox_profile():
@@ -48,9 +48,8 @@ def get_firefox_binary():
                 return path
         raise Exception("Firefox binary not found! Please check your installation.")
 
-
 # ===============================
-# 🔹  INITIAL SETUP
+# 🔹 INITIAL SETUP
 # ===============================
 
 FIREFOX_BINARY = get_firefox_binary()
@@ -70,7 +69,7 @@ FAILED_JOBS_CSV = os.path.join(already_applied_folder, "do_manually_apply.csv")
 SUCCESS_APPLIED_CSV = os.path.join(already_applied_folder, "success_applied.csv")
 ALREADY_APPLIED_CSV = os.path.join(already_applied_folder, "already_applied.csv")
 EXPIRED_JOBS_CSV = os.path.join(already_applied_folder, "expired_jobs.csv")
-COMPANY_LIST_CSV = os.path.join(already_applied_folder, "company_list.csv")  # ✅ New
+COMPANY_LIST_CSV = os.path.join(already_applied_folder, "company_list.csv")
 
 # Counters
 success_apply = 0
@@ -80,9 +79,8 @@ company_sites_count = 0
 expired_jobs_count = 0
 line_no = 0
 
-
 # ===============================
-# 🔹  FIREFOX DRIVER SETUP
+# 🔹 FIREFOX DRIVER SETUP
 # ===============================
 
 service = Service(DRIVER_PATH)
@@ -93,9 +91,8 @@ options.add_argument(PROFILE_PATH)
 driver = webdriver.Firefox(service=service, options=options)
 wait = WebDriverWait(driver, 10)
 
-
 # ===============================
-# 🔹  THREADING + CSV WRITERS
+# 🔹 THREADING + CSV WRITERS (UPDATED)
 # ===============================
 
 company_sites_queue = queue.Queue()
@@ -111,52 +108,55 @@ already_applied_lock = threading.Lock()
 expired_jobs_lock = threading.Lock()
 
 def write_to_csv(file_path, queue, lock, headers):
+    """Writes complete job data (company_name, experience, location, link)"""
     with lock:
         if not os.path.exists(file_path) or os.stat(file_path).st_size == 0:
             with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow(headers)
 
-    existing_data = set()
+    existing_links = set()
     if os.path.exists(file_path):
         with open(file_path, 'r', encoding='utf-8') as csvfile:
             reader = csv.reader(csvfile)
             next(reader, None)
             for row in reader:
-                if row:
-                    existing_data.add(row[0])
+                if len(row) > 3:
+                    existing_links.add(row[3])  # last column = link
 
     while True:
         data = queue.get()
         if data is None:
             break
-        if data in existing_data:
+        company_name, experience, location, job_url = data
+
+        if job_url in existing_links:
             queue.task_done()
             continue
 
         with lock:
             with open(file_path, 'a', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
-                writer.writerow([data])
-            existing_data.add(data)
+                writer.writerow([company_name, experience, location, job_url])
+            existing_links.add(job_url)
         queue.task_done()
 
-# Threads start
-company_thread = threading.Thread(target=write_to_csv, args=(COMPANY_SITES_CSV, company_sites_queue, company_sites_lock, ["URL"]))
-failed_thread = threading.Thread(target=write_to_csv, args=(FAILED_JOBS_CSV, failed_jobs_queue, failed_jobs_lock, ["URL"]))
-success_thread = threading.Thread(target=write_to_csv, args=(SUCCESS_APPLIED_CSV, success_applied_queue, success_applied_lock, ["URL"]))
-already_applied_thread = threading.Thread(target=write_to_csv, args=(ALREADY_APPLIED_CSV, already_applied_queue, already_applied_lock, ["URL"]))
-expired_jobs_thread = threading.Thread(target=write_to_csv, args=(EXPIRED_JOBS_CSV, expired_jobs_queue, expired_jobs_lock, ["URL"]))
+headers = ["Company Name", "Experience", "Location", "Link"]
+
+company_thread = threading.Thread(target=write_to_csv, args=(COMPANY_SITES_CSV, company_sites_queue, company_sites_lock, headers))
+failed_thread = threading.Thread(target=write_to_csv, args=(FAILED_JOBS_CSV, failed_jobs_queue, failed_jobs_lock, headers))
+success_thread = threading.Thread(target=write_to_csv, args=(SUCCESS_APPLIED_CSV, success_applied_queue, success_applied_lock, headers))
+already_applied_thread = threading.Thread(target=write_to_csv, args=(ALREADY_APPLIED_CSV, already_applied_queue, already_applied_lock, headers))
+expired_jobs_thread = threading.Thread(target=write_to_csv, args=(EXPIRED_JOBS_CSV, expired_jobs_queue, expired_jobs_lock, headers))
 
 for t in [company_thread, failed_thread, success_thread, already_applied_thread, expired_jobs_thread]:
     t.start()
 
-
 # ===============================
-# 🔹  HELPER FUNCTIONS
+# 🔹 HELPER FUNCTIONS
 # ===============================
 
-def load_urls_from_csv(file_path, column_index=0):
+def load_urls_from_csv(file_path, column_index=3):
     if not os.path.exists(file_path):
         return set()
     with open(file_path, 'r', encoding='utf-8') as file:
@@ -185,9 +185,8 @@ def append_company_name(file_path, company_name):
         writer = csv.writer(f)
         writer.writerow([company_name])
 
-
 # ===============================
-# 🔹  LOAD EXISTING DATA
+# 🔹 LOAD EXISTING DATA
 # ===============================
 
 already_applied_urls = load_urls_from_csv(ALREADY_APPLIED_CSV)
@@ -196,30 +195,31 @@ expired_jobs_urls = load_urls_from_csv(EXPIRED_JOBS_CSV)
 manual_jobs_urls = load_urls_from_csv(FAILED_JOBS_CSV)
 company_list = load_company_names(COMPANY_LIST_CSV)
 
-
 # ===============================
-# 🔹  MAIN JOB LOOP
+# 🔹 MAIN JOB LOOP
 # ===============================
 
 with open(CSV_FILE, 'r', encoding='utf-8') as file:
     reader = csv.DictReader(file)
     for job in reader:
         company_name = job["Company Name"].strip()
+        experience = job.get("Experience", "").strip()
+        location = job.get("Location", "").strip()
         job_url = job["Link"].strip()
 
         # ✅ Skip if company already seen before
         if company_name in company_list:
             line_no += 1
             company_sites_count += 1
-            logging.info(f"{line_no} Skipping {company_name} (Company already in company_list.csv)")
-            company_sites_queue.put(job_url)
+            logging.info(f"{line_no} Skipping {company_name} (Already in company_list.csv)")
+            company_sites_queue.put((company_name, experience, location, job_url))
             company_sites_urls.add(job_url)
             continue
 
         # ✅ Skip based on URL presence
         if job_url in already_applied_urls or job_url in company_sites_urls or job_url in expired_jobs_urls or job_url in manual_jobs_urls:
             line_no += 1
-            logging.info(f"{line_no} Skipping duplicate or known job: {job_url}")
+            logging.info(f"{line_no} Skipping known job: {job_url}")
             continue
 
         driver.get(job_url)
@@ -230,8 +230,8 @@ with open(CSV_FILE, 'r', encoding='utf-8') as file:
             if expired_element and "expired" in expired_element.text.lower():
                 expired_jobs_count += 1
                 line_no += 1
-                logging.info(f"{line_no} Job Expired (Skipping) ({expired_jobs_count})")
-                expired_jobs_queue.put(job_url)
+                logging.info(f"{line_no} Job Expired ({expired_jobs_count})")
+                expired_jobs_queue.put((company_name, experience, location, job_url))
                 expired_jobs_urls.add(job_url)
                 continue
         except NoSuchElementException:
@@ -242,8 +242,8 @@ with open(CSV_FILE, 'r', encoding='utf-8') as file:
             if already_applied_element:
                 line_no += 1
                 already_applied += 1
-                logging.info(f"{line_no} Already Applied Count: ({already_applied})")
-                already_applied_queue.put(job_url)
+                logging.info(f"{line_no} Already Applied ({already_applied})")
+                already_applied_queue.put((company_name, experience, location, job_url))
                 already_applied_urls.add(job_url)
                 continue
         except NoSuchElementException:
@@ -254,7 +254,7 @@ with open(CSV_FILE, 'r', encoding='utf-8') as file:
             company_sites_count += 1
             line_no += 1
             logging.info(f"{line_no} Company Site Found ({company_sites_count}) - {company_name}")
-            company_sites_queue.put(job_url)
+            company_sites_queue.put((company_name, experience, location, job_url))
             append_company_name(COMPANY_LIST_CSV, company_name)
             company_list.add(company_name)
             continue
@@ -271,24 +271,20 @@ with open(CSV_FILE, 'r', encoding='utf-8') as file:
             success_apply += 1
             line_no += 1
             logging.info(f"{line_no} Successfully Applied ({success_apply}) - {company_name}")
-            success_applied_queue.put(job_url)
+            success_applied_queue.put((company_name, experience, location, job_url))
         except TimeoutException:
             error_apply += 1
             line_no += 1
-            logging.error(f"{line_no} Manually Apply Link ({error_apply}) - {company_name}")
-            failed_jobs_queue.put(job_url)
+            logging.error(f"{line_no} Manual Apply Needed ({error_apply}) - {company_name}")
+            failed_jobs_queue.put((company_name, experience, location, job_url))
             manual_jobs_urls.add(job_url)
 
-
 # ===============================
-# 🔹  CLEANUP
+# 🔹 CLEANUP
 # ===============================
 
-company_sites_queue.put(None)
-failed_jobs_queue.put(None)
-success_applied_queue.put(None)
-already_applied_queue.put(None)
-expired_jobs_queue.put(None)
+for q in [company_sites_queue, failed_jobs_queue, success_applied_queue, already_applied_queue, expired_jobs_queue]:
+    q.put(None)
 
 for t in [company_thread, failed_thread, success_thread, already_applied_thread, expired_jobs_thread]:
     t.join()
